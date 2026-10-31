@@ -297,7 +297,7 @@ class WSL:
                 return dict(self._probe_cache)
             script = (
                 "GW=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}'); "
-                "PIDS=$(pgrep -f '[o]pt/QQ/qq' 2>/dev/null | tr '\\n' ','); "
+                "PIDS=$( { pgrep -x qq; pgrep -x QQ; } 2>/dev/null | sort -u | tr '\\n' ','); "
                 "SCREEN=$(command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -c 'napcat' || echo 0); "
                 "QR=$(stat -c '%%Y %%s' %s 2>/dev/null || echo '0 0'); "
                 "LOG=$(stat -c '%%Y %%s' %s 2>/dev/null || echo '0 0'); "
@@ -1080,51 +1080,83 @@ set +e
 Q=%(qq)s
 L=%(log)s
 export Q L
-pkill -f '[o]pt/QQ/qq' >/dev/null 2>&1
-pkill -f 'Xvfb :99' >/dev/null 2>&1
+exec 3>&1
+: > "$L"
+{
+  echo "=== $(date) NapCat launch ==="
+  echo "QQ=$Q"
+  echo "user=$(id -un) home=$HOME"
+  ls -l "$Q" 2>&1
+  echo "xvfb-run=$(command -v xvfb-run 2>/dev/null)"
+  echo "Xvfb=$(command -v Xvfb 2>/dev/null)"
+  echo "screen=$(command -v screen 2>/dev/null)"
+} >> "$L" 2>&1
+pkill -x qq >/dev/null 2>&1
+pkill -x QQ >/dev/null 2>&1
+pkill -f "xvfb-run -a $Q" >/dev/null 2>&1
+pkill -x Xvfb >/dev/null 2>&1
 sleep 0.4
 screen -S napcat -X quit >/dev/null 2>&1
 screen -wipe >/dev/null 2>&1
-: > "$L"
-if command -v Xvfb >/dev/null 2>&1; then
-  nohup Xvfb :99 -screen 0 1440x900x24 >/root/napcat-xvfb.log 2>&1 &
-  sleep 1
-fi
 if command -v screen >/dev/null 2>&1; then
-  if pgrep -f 'Xvfb :99' >/dev/null 2>&1; then
-    screen -dmS napcat bash -c 'DISPLAY=:99 exec "$Q" --no-sandbox >> "$L" 2>&1'
+  if command -v xvfb-run >/dev/null 2>&1; then
+    screen -dmS napcat bash -c 'exec xvfb-run -a "$Q" --no-sandbox >> "$L" 2>&1' >> "$L" 2>&1
+  elif command -v Xvfb >/dev/null 2>&1; then
+    screen -dmS napcat bash -c 'Xvfb :99 -screen 0 1440x900x24 >> /root/napcat-xvfb.log 2>&1 & sleep 1; DISPLAY=:99 exec "$Q" --no-sandbox >> "$L" 2>&1' >> "$L" 2>&1
   else
-    screen -dmS napcat bash -c 'exec xvfb-run -a "$Q" --no-sandbox >> "$L" 2>&1'
+    echo "ERROR: neither xvfb-run nor Xvfb found" >> "$L"
   fi
 else
-  if pgrep -f 'Xvfb :99' >/dev/null 2>&1; then
-    nohup env DISPLAY=:99 "$Q" --no-sandbox >> "$L" 2>&1 &
-  else
+  if command -v xvfb-run >/dev/null 2>&1; then
     nohup xvfb-run -a "$Q" --no-sandbox >> "$L" 2>&1 &
+  elif command -v Xvfb >/dev/null 2>&1; then
+    nohup bash -c 'Xvfb :99 -screen 0 1440x900x24 >> /root/napcat-xvfb.log 2>&1 & sleep 1; DISPLAY=:99 "$Q" --no-sandbox >> "$L" 2>&1' &
+  else
+    echo "ERROR: neither xvfb-run nor Xvfb found" >> "$L"
   fi
 fi
-sleep 0.6
-pgrep -f '[o]pt/QQ/qq' | tr '\n' ' '
+echo "screen_rc=$?" >> "$L"
+sleep 1
+if command -v screen >/dev/null 2>&1; then screen -ls >> "$L" 2>&1; fi
+sleep 4
+if ! pgrep -x qq >/dev/null 2>&1 && ! pgrep -x QQ >/dev/null 2>&1; then
+  echo "--- no QQ process after 5s ---" >> "$L"
+  pgrep -x qq >> "$L" 2>&1
+  pgrep -x QQ >> "$L" 2>&1
+  pgrep -x Xvfb >> "$L" 2>&1
+  pgrep -x xvfb-run >> "$L" 2>&1
+  if command -v screen >/dev/null 2>&1; then screen -ls >> "$L" 2>&1; fi
+  tail -n 40 /root/napcat-xvfb.log >> "$L" 2>&1
+fi
+{ pgrep -x qq; pgrep -x QQ; } 2>/dev/null | sort -u | tr '\n' ' ' >&3
 """ % {"qq": shlex.quote(qq), "log": shlex.quote(log)}
         progress(58, "正在拉起 NapCat 网关")
-        r = self.wsl.run(script, timeout=35)
+        r = self.wsl.run(script, timeout=22)
         out = _decode(r.stdout or b"").strip()
         pids = [int(x) for x in out.split() if x.isdigit()]
         if not pids:
-            # 再等一会儿：Linux QQ 在部分机器上启动较慢
-            deadline = time.time() + 35
+            # screen 里的 QQ 进程通常几秒内出现；留 12 秒给慢机器
+            deadline = time.time() + 12
             while time.time() < deadline:
                 pids = self.pids()
                 if pids:
                     break
                 time.sleep(0.8)
         if not pids:
-            tail = self.read_log(60)
-            return {
-                "ok": False,
-                "msg": "NapCat 启动失败，日志：\n" + tail[-1500:],
-                "pids": [],
-            }
+            tail = self.read_log(90)
+            extra = _decode(r.stderr or b"").strip()
+            if extra:
+                tail = (tail + "\n--- launcher stderr ---\n" + extra).strip()
+            reason = ""
+            for line in tail.splitlines():
+                s = line.strip()
+                if s.startswith("ERROR:") or "no QQ process" in s or "not found" in s:
+                    reason = s
+                    break
+            head = "NapCat 启动失败" + ((": " + reason) if reason else "（启动器无输出）")
+            if not tail.strip():
+                tail = "启动器没有产生日志：请检查 xvfb-run / Xvfb / screen 是否安装，以及 QQ 是否可执行。"
+            return {"ok": False, "msg": head + "\n" + tail[-2600:], "pids": []}
         self.wsl.invalidate()
         progress(66, "NapCat 进程已拉起")
         return {"ok": True, "msg": "NapCat 已启动", "pids": pids}
@@ -1135,12 +1167,13 @@ pgrep -f '[o]pt/QQ/qq' | tr '\n' ' '
 Q=%(qq)s
 export Q
 screen -S napcat -X quit >/dev/null 2>&1
-pkill -f '[o]pt/QQ/qq' >/dev/null 2>&1
+pkill -x qq >/dev/null 2>&1
+pkill -x QQ >/dev/null 2>&1
 sleep 1
-pkill -f 'Xvfb :99' >/dev/null 2>&1
+pkill -x Xvfb >/dev/null 2>&1
 pkill -f "xvfb-run -a $Q" >/dev/null 2>&1
 sleep 0.4
-pgrep -f '[o]pt/QQ/qq' | tr '\n' ' '
+{ pgrep -x qq; pgrep -x QQ; } 2>/dev/null | sort -u | tr '\n' ' '
 """ % {"qq": shlex.quote(layout["qq"])}
         self.wsl.run(script, timeout=18)
         self.wsl.invalidate()
@@ -1268,7 +1301,7 @@ class Backend:
             probe = {"error": str(e), "pids": [], "gateway": ""}
         n_pids = list(probe.get("pids") or [])
         gateway = probe.get("gateway") or self.wsl.gateway()
-        n_running = bool(n_pids) or bool(probe.get("screen"))
+        n_running = bool(n_pids)
         wstate = {}
         webui_port_open = port_open(self.st.webui_port)
         if n_running or webui_port_open:
@@ -1383,7 +1416,7 @@ class Backend:
 
             progress(20, "启动 AstrBot")
             a = self.astrbot.start(progress)
-            self.event("AstrBot: " + a["msg"].splitlines()[0])
+            self.event("AstrBot: " + a["msg"])
             if not a.get("ok"):
                 return {"ok": False, "msg": a.get("msg", "AstrBot 启动失败"), "needs_qr": False}
 
@@ -1419,7 +1452,7 @@ class Backend:
 
             progress(58, "启动 NapCat 网关")
             n = self.napcat.start(progress)
-            self.event("NapCat: " + n["msg"].splitlines()[0])
+            self.event("NapCat: " + n["msg"])
             if not n.get("ok"):
                 return {"ok": False, "msg": n.get("msg", "NapCat 启动失败"), "needs_qr": False}
 
@@ -1775,6 +1808,30 @@ class Backend:
                     layout["config_dir"],
                     "启动过一次 NapCat 后会自动生成",
                 )
+                runnable = (
+                    self.wsl.run(
+                        "test -x %s" % shlex.quote(layout["qq"]), timeout=8
+                    ).returncode
+                    == 0
+                )
+                add(
+                    "NapCat QQ 可执行",
+                    runnable,
+                    layout["qq"],
+                    "执行 chmod +x 或检查 QQ 安装权限",
+                )
+                for label, cmd, hint in (
+                    ("xvfb-run", "command -v xvfb-run 2>/dev/null", "安装 xvfb 后重试"),
+                    ("Xvfb", "command -v Xvfb 2>/dev/null", "安装 xvfb 后重试"),
+                    ("screen", "command -v screen 2>/dev/null", "安装 screen 后重试"),
+                ):
+                    out = self.wsl.text(cmd, timeout=8)
+                    add(
+                        "NapCat 依赖 · " + label,
+                        bool(out),
+                        out or "未找到",
+                        hint,
+                    )
 
         a = self.astrbot.running()
         ob = port_open(self.st.onebot_port)
