@@ -1,0 +1,40 @@
+# ============================================================
+# 大肥鱼控制台 · Git 忽略规则
+# 原则：只跟踪源码、文档与界面预览图；
+#       运行时资产、二进制、日志与密钥一律留在本地。
+# 详见 docs/变更管理.md
+# ============================================================
+
+# --- 本地运行时 / 大体积资产（合计约 1.4 GB）---
+/QQ/
+/napcat/
+/_download/
+/logs/
+/_local/
+
+# --- AstrBot 工作目录（仅保留目录占位）---
+/astrbot/*
+!/astrbot/.gitkeep
+
+# --- 敏感配置与运行期状态 ---
+/console/settings.json
+/console/settings.bad.json
+/console/settings.tmp
+/console/settings.*.tmp
+/linux-onebot11.json
+
+# --- Python 缓存与虚拟环境 ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- 编辑器 / 系统杂项 ---
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.log

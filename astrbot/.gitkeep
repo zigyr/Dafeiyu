@@ -1,0 +1,2 @@
+# AstrBot 工作目录占位文件
+# 该目录下的实际运行时数据（data/、ws_token.txt、astrbot.lock 等）已被 .gitignore 排除。
