@@ -297,7 +297,7 @@ class WSL:
                 return dict(self._probe_cache)
             script = (
                 "GW=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}'); "
-                "PIDS=$( { pgrep -x qq; pgrep -x QQ; } 2>/dev/null | sort -u | tr '\\n' ','); "
+                "PIDS=$( { pgrep -x qq; pgrep -x QQ; pgrep -f '[o]pt/QQ/qq' | while read -r p; do c=$(cat /proc/$p/comm 2>/dev/null); case \"$c\" in xvfb-run|screen|bash|sh|dash) ;; *) echo \"$p\" ;; esac; done; } 2>/dev/null | sort -u | tr '\\n' ','); "
                 "SCREEN=$(command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -c 'napcat' || echo 0); "
                 "QR=$(stat -c '%%Y %%s' %s 2>/dev/null || echo '0 0'); "
                 "LOG=$(stat -c '%%Y %%s' %s 2>/dev/null || echo '0 0'); "
@@ -1101,6 +1101,7 @@ exec 3>&1
 } >> %(log)s 2>&1
 pkill -x qq >/dev/null 2>&1
 pkill -x QQ >/dev/null 2>&1
+pkill -f '[o]pt/QQ/qq' >/dev/null 2>&1
 pkill -x xvfb-run >/dev/null 2>&1
 pkill -x Xvfb >/dev/null 2>&1
 sleep 0.4
@@ -1127,16 +1128,17 @@ echo "screen_rc=$?" >> %(log)s
 sleep 1
 if command -v screen >/dev/null 2>&1; then screen -ls >> %(log)s 2>&1; fi
 sleep 4
-if ! pgrep -x qq >/dev/null 2>&1 && ! pgrep -x QQ >/dev/null 2>&1; then
+if ! pgrep -x qq >/dev/null 2>&1 && ! pgrep -x QQ >/dev/null 2>&1 && ! pgrep -f '[o]pt/QQ/qq' >/dev/null 2>&1; then
   echo "--- no QQ process after 5s ---" >> %(log)s
   pgrep -x qq >> %(log)s 2>&1
   pgrep -x QQ >> %(log)s 2>&1
+  pgrep -f '[o]pt/QQ/qq' >> %(log)s 2>&1
   pgrep -x Xvfb >> %(log)s 2>&1
   pgrep -x xvfb-run >> %(log)s 2>&1
   if command -v screen >/dev/null 2>&1; then screen -ls >> %(log)s 2>&1; fi
   tail -n 40 /root/napcat-xvfb.log >> %(log)s 2>&1
 fi
-{ pgrep -x qq; pgrep -x QQ; } 2>/dev/null | sort -u | tr '\n' ' ' >&3
+{ pgrep -x qq; pgrep -x QQ; pgrep -f '[o]pt/QQ/qq'; } 2>/dev/null | sort -u | tr '\n' ' ' >&3
 """ % {"qq": qqq, "log": logq}
         launcher = "/root/napcat-start.sh"
         progress(58, "正在拉起 NapCat 网关")
@@ -1182,6 +1184,7 @@ fi
 screen -S napcat -X quit >/dev/null 2>&1
 pkill -x qq >/dev/null 2>&1
 pkill -x QQ >/dev/null 2>&1
+pkill -f '[o]pt/QQ/qq' >/dev/null 2>&1
 sleep 1
 pkill -x Xvfb >/dev/null 2>&1
 pkill -x xvfb-run >/dev/null 2>&1
@@ -1314,10 +1317,12 @@ class Backend:
             probe = {"error": str(e), "pids": [], "gateway": ""}
         n_pids = list(probe.get("pids") or [])
         gateway = probe.get("gateway") or self.wsl.gateway()
-        n_running = bool(n_pids)
-        wstate = {}
         webui_port_open = port_open(self.st.webui_port)
-        if n_running or webui_port_open:
+        # 进程名在不同 Linux QQ / NapCat 版本下不一定是 qq；WebUI 或已有
+        # 反向 WS 连接都证明 NapCat 在运行，避免误判“已停止”后自动重启。
+        n_running = bool(n_pids) or bool(peers) or webui_port_open
+        wstate = {}
+        if n_running:
             # NapCat 没跑时不访问 WebUI，避免无谓的等待
             wstate = self._webui_status(ttl=2.0)
         logged_in = bool(wstate.get("isLogin")) or bool(peers)
@@ -1464,7 +1469,21 @@ class Backend:
                 return {"ok": False, "msg": patch.get("msg", "NapCat 配置失败"), "needs_qr": False}
 
             progress(58, "启动 NapCat 网关")
-            n = self.napcat.start(progress)
+            already_napcat = (
+                bool(self.napcat.pids())
+                or bool(established_peers(self.st.onebot_port))
+                or port_open(self.st.webui_port)
+            )
+            if already_napcat:
+                n = {
+                    "ok": True,
+                    "msg": "NapCat 已在运行",
+                    "pids": self.napcat.pids(),
+                    "already": True,
+                }
+                progress(66, "NapCat 已在运行")
+            else:
+                n = self.napcat.start(progress)
             self.event("NapCat: " + n["msg"])
             if not n.get("ok"):
                 return {"ok": False, "msg": n.get("msg", "NapCat 启动失败"), "needs_qr": False}

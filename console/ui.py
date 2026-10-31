@@ -1085,8 +1085,15 @@ class MainWindow(QWidget):
         nap_meta = "未运行"
         if n.get("running"):
             pids = ",".join(str(x) for x in (n.get("pids") or []))
-            nap_meta = "PID %s · 网关 %s" % (pids or "-", n.get("gateway") or "?")
-            if not n.get("webui"):
+            if pids:
+                nap_meta = "PID %s · 网关 %s" % (pids, n.get("gateway") or "?")
+            elif q.get("linked"):
+                nap_meta = "运行中 · 反向 WS 已连接 · 网关 %s" % (n.get("gateway") or "?")
+            elif n.get("webui"):
+                nap_meta = "运行中 · WebUI 已就绪 · 网关 %s" % (n.get("gateway") or "?")
+            else:
+                nap_meta = "运行中 · 网关 %s" % (n.get("gateway") or "?")
+            if not n.get("webui") and not q.get("linked"):
                 nap_meta += " · WebUI 等待"
         elif n.get("gateway"):
             nap_meta = "未运行 · 网关 %s" % n.get("gateway")
