@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import sys, time
-sys.path.insert(0, r"F:\dafeiyu\console")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import server as c
 
 time.sleep(7)
