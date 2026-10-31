@@ -1,0 +1,19 @@
+{
+  "account": "2960405592",
+  "quick_login": true,
+  "wsl_distro": "kali-linux",
+  "astrbot_exe": "C:\\Users\\zigyr\\.local\\bin\\astrbot.exe",
+  "astrbot_cwd": "F:\\dafeiyu\\astrbot",
+  "napcat_home": "/root/Napcat",
+  "napcat_qq": "/root/Napcat/opt/QQ/qq",
+  "napcat_log": "/root/napcat-run.log",
+  "dashboard_port": 6185,
+  "onebot_port": 6199,
+  "webui_port": 6099,
+  "minimize_to_tray": true,
+  "auto_heal": true,
+  "autostart": false,
+  "start_services_on_launch": false,
+  "log_lines": 220,
+  "onebot_token": ""
+}
