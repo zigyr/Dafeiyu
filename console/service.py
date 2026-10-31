@@ -168,6 +168,20 @@ class Service(QObject):
 
         self.pool.submit(job)
 
+    def allow_firewall(self):
+        def job():
+            try:
+                res = self.backend.allow_firewall()
+            except Exception as e:
+                res = {"ok": False, "msg": "放行失败: %s" % e}
+            self.toast.emit(res.get("msg", ""), not res.get("ok"))
+            try:
+                self.diag_ready.emit(self.backend.diagnose())
+            except Exception:
+                pass
+
+        self.pool.submit(job)
+
     # -- 设置 --------------------------------------------------------------
     def save_settings(self, st: Settings):
         st.save()

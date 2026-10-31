@@ -746,7 +746,15 @@ class DiagnoseDialog(RoundDialog):
         self.rerun = SecondaryButton("重新检查", "refresh", SKY)
         self.rerun.clicked.connect(self.run)
         row.addWidget(self.rerun)
+        self.copy_btn = SecondaryButton("复制结果", "copy", SKY)
+        self.copy_btn.clicked.connect(self._copy)
+        row.addWidget(self.copy_btn)
         row.addStretch(1)
+        self.fw_btn = SecondaryButton("放行 6199", "shield", AMBER)
+        self.fw_btn.setToolTip("通过 UAC 添加 Windows 防火墙入站规则，允许 WSL 访问 AstrBot 的 6199")
+        self.fw_btn.clicked.connect(self.service.allow_firewall)
+        self.fw_btn.setVisible(False)
+        row.addWidget(self.fw_btn)
         repair = SecondaryButton("一键修复", "spark", ACCENT)
         repair.clicked.connect(self._repair)
         row.addWidget(repair)
@@ -816,7 +824,30 @@ class DiagnoseDialog(RoundDialog):
                 h.setWordWrap(True)
                 lay.addWidget(h)
             self.rows.insertWidget(self.rows.count() - 1, box)
+        fw_failed = any(
+            (not it.get("ok")) and "WSL" in str(it.get("name", "")) and "6199" in str(it.get("name", ""))
+            for it in items
+        )
+        self.fw_btn.setVisible(fw_failed)
         transparent_labels(self.container)
+
+    def _copy(self):
+        lines = ["大肥鱼控制台 · 体检报告", time.strftime("%Y-%m-%d %H:%M:%S"), ""]
+        for it in self._items:
+            mark = "OK" if it.get("ok") else "!!"
+            lines.append("[%s] %s · %s" % (mark, it.get("name", ""), it.get("detail", "")))
+            if it.get("hint") and not it.get("ok"):
+                lines.append("     建议：" + str(it.get("hint")))
+        QApplication.clipboard().setText("\n".join(lines))
+        self.copy_btn.setText("已复制")
+        self.copy_btn._recalc()
+        self.copy_btn.update()
+        QTimer.singleShot(1500, self._reset_copy)
+
+    def _reset_copy(self):
+        self.copy_btn.setText("复制结果")
+        self.copy_btn._recalc()
+        self.copy_btn.update()
 
     def _repair(self):
         self.repair_requested.emit()

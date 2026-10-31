@@ -82,10 +82,99 @@ def _notify_existing() -> bool:
     return False
 
 
+def _run_diagnose() -> int:
+    """无界面诊断：把真实 WSL/NapCat/QQ 状态打成报告，方便反馈。"""
+    from settings import Settings
+    import core
+
+    st = Settings.load()
+    b = core.Backend(st)
+    print("大肥鱼控制台 · 环境诊断")
+    print("时间:", time.strftime("%Y-%m-%d %H:%M:%S"))
+    print("账号:", st.account)
+    print("WSL :", st.wsl_distro, "| AstrBot:", st.astrbot_exe)
+    print("NapCat:", st.napcat_home)
+    print()
+    try:
+        s = b.status()
+    except Exception as e:
+        s = {}
+        print("[状态读取失败]", e)
+    if s:
+        h = s.get("health", {})
+        print("健康:", "[%s] %s" % (h.get("level"), h.get("text")))
+        a, n, q, o = s.get("astrbot", {}), s.get("napcat", {}), s.get("qq", {}), s.get("onebot", {})
+        print(
+            "AstrBot: %s pid=%s" % ("运行中" if a.get("running") else "停止", a.get("pid"))
+        )
+        print(
+            "NapCat : %s pids=%s webui=%s gateway=%s"
+            % (
+                "运行中" if n.get("running") else "停止",
+                ",".join(str(x) for x in (n.get("pids") or [])) or "-",
+                n.get("webui"),
+                n.get("gateway") or "-",
+            )
+        )
+        print(
+            "QQ     : logged_in=%s online=%s linked=%s phase=%s"
+            % (q.get("logged_in"), q.get("online"), q.get("linked"), q.get("phase") or "-")
+        )
+        print("OneBot : listen=%s clients=%s" % (o.get("listening"), o.get("clients")))
+        print()
+    print("[检查项]")
+    lines = []
+    try:
+        items = b.diagnose()
+    except Exception as e:
+        items = [{"name": "诊断失败", "ok": False, "detail": str(e), "hint": ""}]
+    for it in items:
+        mark = "OK" if it.get("ok") else "!!"
+        line = "[%s] %s · %s" % (mark, it.get("name", ""), it.get("detail", ""))
+        print(line)
+        lines.append(line)
+        if it.get("hint") and not it.get("ok"):
+            hint = "     建议：" + str(it.get("hint"))
+            print(hint)
+            lines.append(hint)
+    print()
+    print("[日志尾部]")
+    try:
+        tail = core.read_tail(core.ASTRBOT_LOG, 12)
+        print("--- AstrBot ---")
+        print(tail)
+        lines += ["--- AstrBot ---", tail]
+    except Exception:
+        pass
+    try:
+        tail = b.napcat.read_log(12)
+        print("--- NapCat ---")
+        print(tail)
+        lines += ["--- NapCat ---", tail]
+    except Exception as e:
+        print("NapCat 日志读取失败:", e)
+    try:
+        tail = core.read_tail(core.EVENT_LOG, 12)
+        print("--- 控制台事件 ---")
+        print(tail)
+        lines += ["--- 控制台事件 ---", tail]
+    except Exception:
+        pass
+    report = "\n".join(lines)
+    path = core.LOG_DIR / ("diagnose-%s.txt" % time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        path.write_text(report, encoding="utf-8")
+        print("\n报告已保存:", path)
+    except Exception as e:
+        print("\n报告保存失败:", e)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--minimized", action="store_true", help="启动后只驻留托盘")
     parser.add_argument("--demo", action="store_true", help="演示模式")
+    parser.add_argument("--diagnose", action="store_true", help="无界面输出环境诊断报告")
     parser.add_argument("--screenshot", default="", help="离屏截图输出路径")
     parser.add_argument(
         "--state",
@@ -100,6 +189,9 @@ def main(argv=None) -> int:
         help="截图指定弹窗",
     )
     args, _ = parser.parse_known_args(argv)
+
+    if args.diagnose:
+        return _run_diagnose()
 
     _set_app_id()
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(

@@ -218,6 +218,10 @@ class DemoService(QObject):
     def quick_login(self):
         self.toast.emit("快速登录成功", False)
 
+    def allow_firewall(self):
+        self.toast.emit("演示模式：已模拟放行 TCP 6199", False)
+        self.diagnose()
+
     def save_settings(self, st: Settings):
         self.st = st
         st.save()

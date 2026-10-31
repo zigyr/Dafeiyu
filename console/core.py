@@ -15,6 +15,7 @@ OneBot 反向连接校准、NapCat WebUI 通讯、快速登录与二维码。
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import json
 import os
@@ -243,7 +244,10 @@ class WSL:
         return _decode(r.stdout or b"").strip()
 
     def read(self, path: str, timeout: float = 15) -> str:
-        return self.text("cat -- %s 2>/dev/null" % shlex.quote(path), timeout=timeout)
+        r = self.run("cat -- %s 2>/dev/null" % shlex.quote(path), timeout=timeout)
+        if r.returncode != 0:
+            return ""
+        return _decode(r.stdout or b"").strip()
 
     def write(self, path: str, data: str | bytes, timeout: float = 20) -> bool:
         if isinstance(data, str):
@@ -424,11 +428,13 @@ class WebUI:
                     self.b.napcat.set_webui_file(cands[0])
                     raw = self.wsl.read(cands[0], timeout=10)
             if not raw:
-                raise WebUIError("找不到 NapCat WebUI 配置（webui.json）")
+                raise WebUIError("找不到 NapCat WebUI 配置（WSL 可能未启动）")
+            if not raw.lstrip().startswith("{"):
+                raise WebUIError("读取 webui.json 失败（WSL 不可用或权限不足）")
             try:
                 cfg = json.loads(raw)
             except Exception:
-                raise WebUIError("webui.json 解析失败")
+                raise WebUIError("webui.json 格式异常")
             if cfg.get("disableWebUI"):
                 raise WebUIError("NapCat WebUI 已被禁用")
             self._cfg = cfg
@@ -1679,6 +1685,58 @@ class Backend:
         return ""
 
     # -- 诊断 --------------------------------------------------------------
+    def _firewall_rule_name(self) -> str:
+        return "Dafeiyu OneBot %d" % int(self.st.onebot_port)
+
+    def _firewall_rule_exists(self) -> bool:
+        if sys.platform != "win32":
+            return False
+        netsh = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "netsh.exe")
+        try:
+            r = run_hidden(
+                [
+                    netsh,
+                    "advfirewall",
+                    "firewall",
+                    "show",
+                    "rule",
+                    "name=%s" % self._firewall_rule_name(),
+                ],
+                timeout=12,
+            )
+            return self._firewall_rule_name() in _decode(r.stdout or b"")
+        except Exception:
+            return False
+
+    def allow_firewall(self) -> dict:
+        """通过 UAC 放行 TCP 6199 入站（只加一条命名规则）。"""
+        if sys.platform != "win32":
+            return {"ok": False, "msg": "仅支持 Windows"}
+        if self._firewall_rule_exists():
+            return {"ok": True, "msg": "6199 入站规则已存在"}
+        netsh = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "netsh.exe")
+        args = (
+            'advfirewall firewall add rule name="%s" dir=in action=allow '
+            "protocol=TCP localport=%d profile=any"
+            % (self._firewall_rule_name(), int(self.st.onebot_port))
+        )
+        try:
+            rc = int(
+                ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", netsh, args, None, 1
+                )
+            )
+        except Exception as e:
+            return {"ok": False, "msg": "无法发起管理员提权: %s" % e}
+        if rc <= 32:
+            return {"ok": False, "msg": "UAC 被取消或提权失败（code %d）" % rc}
+        for _ in range(20):
+            if self._firewall_rule_exists():
+                self.event("已放行 Windows 防火墙 TCP %d" % self.st.onebot_port)
+                return {"ok": True, "msg": "已放行 TCP %d 入站" % self.st.onebot_port}
+            time.sleep(0.5)
+        return {"ok": False, "msg": "未检测到防火墙规则，可能取消了 UAC"}
+
     def diagnose(self) -> list[dict]:
         items: list[dict] = []
 
