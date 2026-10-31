@@ -23,6 +23,14 @@
 /console/settings.*.tmp
 /linux-onebot11.json
 
+# --- 插件运行时 SQLite（在项目根生成，不入库）---
+/*.db
+/*.db-shm
+/*.db-wal
+/*.sqlite
+/*.sqlite-shm
+/*.sqlite-wal
+
 # --- Python 缓存与虚拟环境 ---
 __pycache__/
 *.py[cod]
