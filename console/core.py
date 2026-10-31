@@ -1740,8 +1740,16 @@ class Backend:
     def diagnose(self) -> list[dict]:
         items: list[dict] = []
 
-        def add(name, ok, detail="", hint=""):
-            items.append({"name": name, "ok": bool(ok), "detail": detail, "hint": hint})
+        def add(name, ok, detail="", hint="", skip=False):
+            items.append(
+                {
+                    "name": name,
+                    "ok": bool(ok),
+                    "detail": detail,
+                    "hint": hint,
+                    "skip": bool(skip),
+                }
+            )
 
         exe = Path(self.st.astrbot_exe)
         add("AstrBot 程序", exe.exists(), str(exe), "在设置里改成 astrbot.exe 的实际路径")
@@ -1767,10 +1775,9 @@ class Backend:
                     layout["config_dir"],
                     "启动过一次 NapCat 后会自动生成",
                 )
+
         a = self.astrbot.running()
-        add("AstrBot 面板 (:%d)" % self.st.dashboard_port, a, "端口监听" if a else "未监听")
         ob = port_open(self.st.onebot_port)
-        add("OneBot 服务 (:%d)" % self.st.onebot_port, ob, "端口监听" if ob else "未监听", "AstrBot 平台需启用 aiocqhttp")
         probe = {}
         if wsl_ok:
             try:
@@ -1778,14 +1785,88 @@ class Backend:
             except Exception as e:
                 probe = {"error": str(e)}
         nrun = bool(probe.get("pids"))
-        add("NapCat 进程", nrun, "PID " + ",".join(map(str, probe.get("pids") or [])) if nrun else "未运行")
-        gw = probe.get("gateway") or ""
-        add("WSL 网关", bool(gw), gw, "WSL 网络异常时重启 WSL")
-        w = self._webui_status(ttl=0, force=True)
-        add("NapCat WebUI (:%d)" % self.st.webui_port, w.get("ok"), w.get("error") or "已连接", "WebUI 被禁用或端口被占用")
-        add("QQ 登录", w.get("isLogin"), w.get("phase") or w.get("loginError", ""), "点「扫码登录」")
+        gw = probe.get("gateway") or (self.wsl.gateway(force=True) if wsl_ok else "")
+
+        add(
+            "AstrBot 面板 (:%d)" % self.st.dashboard_port,
+            a,
+            "端口监听" if a else "未启动（预期）",
+            "" if a else "先一键启动",
+            skip=not a,
+        )
+        if ob:
+            add("OneBot 服务 (:%d)" % self.st.onebot_port, True, "端口监听", "")
+        elif not a:
+            add(
+                "OneBot 服务 (:%d)" % self.st.onebot_port,
+                False,
+                "AstrBot 未启动（预期）",
+                "启动 AstrBot 后检查",
+                skip=True,
+            )
+        else:
+            add(
+                "OneBot 服务 (:%d)" % self.st.onebot_port,
+                False,
+                "未监听",
+                "AstrBot 平台需启用 aiocqhttp",
+            )
+        add(
+            "NapCat 进程",
+            nrun,
+            "PID " + ",".join(map(str, probe.get("pids") or [])) if nrun else "未运行",
+            "" if nrun else "先一键启动",
+            skip=not nrun,
+        )
+        add(
+            "WSL 网关",
+            bool(gw),
+            gw or "未取到",
+            "WSL 网络异常时重启 WSL",
+        )
+
+        w = {}
+        if nrun:
+            w = self._webui_status(ttl=0, force=True)
+            add(
+                "NapCat WebUI (:%d)" % self.st.webui_port,
+                w.get("ok"),
+                w.get("error") or "已连接",
+                "WebUI 被禁用或端口被占用",
+            )
+            add(
+                "QQ 登录",
+                w.get("isLogin"),
+                w.get("phase") or w.get("loginError", ""),
+                "点「扫码登录」",
+            )
+        else:
+            add(
+                "NapCat WebUI (:%d)" % self.st.webui_port,
+                False,
+                "NapCat 未运行，未探测",
+                "",
+                skip=True,
+            )
+            add(
+                "QQ 登录",
+                False,
+                "NapCat 未运行，未探测",
+                "启动并扫码后再检查",
+                skip=True,
+            )
+
         peers = established_peers(self.st.onebot_port)
-        add("反向 WS 连接", bool(peers), ", ".join(peers) or "未建立", "会自动重启 NapCat 重载配置")
+        if peers:
+            add("反向 WS 连接", True, ", ".join(peers))
+        else:
+            add(
+                "反向 WS 连接",
+                False,
+                "NapCat 未运行（预期）" if not nrun else "未建立",
+                "" if not nrun else "会自动重启 NapCat 重载配置",
+                skip=not nrun,
+            )
         if wsl_ok and layout and ob:
             files = self.napcat.onebot_files()
             token = self.token()

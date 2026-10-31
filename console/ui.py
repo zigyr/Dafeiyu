@@ -796,7 +796,9 @@ class DiagnoseDialog(RoundDialog):
         if not items:
             items = [{"name": "没有结果", "ok": False, "detail": "", "hint": ""}]
         for it in items:
-            level = "ok" if it.get("ok") else "bad"
+            ok = bool(it.get("ok"))
+            skip = bool(it.get("skip"))
+            level = "ok" if ok else ("info" if skip else "bad")
             box = QWidget()
             lay = QVBoxLayout(box)
             lay.setContentsMargins(0, 0, 0, 0)
@@ -808,7 +810,7 @@ class DiagnoseDialog(RoundDialog):
             top.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
             name = QLabel(it.get("name", ""))
             name.setFont(font(11, 600))
-            name.setStyleSheet("color: %s;" % (TEXT if it.get("ok") else AMBER))
+            name.setStyleSheet("color: %s;" % (TEXT if ok else (DIM if skip else AMBER)))
             top.addWidget(name)
             detail = QLabel(it.get("detail", ""))
             detail.setFont(font(9, 400))
@@ -817,7 +819,7 @@ class DiagnoseDialog(RoundDialog):
             top.addWidget(detail, 1)
             lay.addLayout(top)
             hint = it.get("hint") or ""
-            if hint and not it.get("ok"):
+            if hint and not ok and not skip:
                 h = QLabel("建议：" + hint)
                 h.setFont(font(9, 400))
                 h.setStyleSheet("color: %s; padding-left: 18px;" % DIM)
@@ -825,7 +827,10 @@ class DiagnoseDialog(RoundDialog):
                 lay.addWidget(h)
             self.rows.insertWidget(self.rows.count() - 1, box)
         fw_failed = any(
-            (not it.get("ok")) and "WSL" in str(it.get("name", "")) and "6199" in str(it.get("name", ""))
+            (not it.get("ok"))
+            and not it.get("skip")
+            and "WSL" in str(it.get("name", ""))
+            and "6199" in str(it.get("name", ""))
             for it in items
         )
         self.fw_btn.setVisible(fw_failed)
@@ -834,9 +839,11 @@ class DiagnoseDialog(RoundDialog):
     def _copy(self):
         lines = ["大肥鱼控制台 · 体检报告", time.strftime("%Y-%m-%d %H:%M:%S"), ""]
         for it in self._items:
-            mark = "OK" if it.get("ok") else "!!"
+            ok = bool(it.get("ok"))
+            skip = bool(it.get("skip"))
+            mark = "OK" if ok else ("--" if skip else "!!")
             lines.append("[%s] %s · %s" % (mark, it.get("name", ""), it.get("detail", "")))
-            if it.get("hint") and not it.get("ok"):
+            if it.get("hint") and not ok and not skip:
                 lines.append("     建议：" + str(it.get("hint")))
         QApplication.clipboard().setText("\n".join(lines))
         self.copy_btn.setText("已复制")

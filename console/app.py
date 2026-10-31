@@ -129,14 +129,20 @@ def _run_diagnose() -> int:
     except Exception as e:
         items = [{"name": "诊断失败", "ok": False, "detail": str(e), "hint": ""}]
     for it in items:
-        mark = "OK" if it.get("ok") else "!!"
+        ok = bool(it.get("ok"))
+        skip = bool(it.get("skip"))
+        mark = "OK" if ok else ("--" if skip else "!!")
         line = "[%s] %s · %s" % (mark, it.get("name", ""), it.get("detail", ""))
         print(line)
         lines.append(line)
-        if it.get("hint") and not it.get("ok"):
+        if it.get("hint") and not ok and not skip:
             hint = "     建议：" + str(it.get("hint"))
             print(hint)
             lines.append(hint)
+    if any(it.get("skip") for it in items):
+        note = "说明：[--] 为前置服务未启动时的预期跳过；先一键启动后再诊断。"
+        print(note)
+        lines.append(note)
     print()
     print("[日志尾部]")
     try:
