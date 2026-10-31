@@ -1360,9 +1360,9 @@ class MainWindow(QWidget):
     def on_stop_done(self, res: dict):
         if self._quitting:
             self._do_quit()
-        else:
-            self._busy = False
-            self.show_toast("已停止服务", bool(not res.get("ok")))
+            return
+        self._busy = False
+        self.show_toast("已停止服务", bool(not res.get("ok")))
         self.service.refresh_status()
 
     def _request_quit(self):
