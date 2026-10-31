@@ -879,7 +879,9 @@ class NapCat:
     # -- 状态 --------------------------------------------------------------
     def probe(self, ttl: float = 4.0) -> dict:
         layout = self.discover()
-        return self.wsl.probe(layout["qr"], layout["log"], ttl=ttl)
+        qr_path = layout.get("qr") or self.st.napcat_qr
+        log_path = layout.get("log") or self.st.napcat_log or "/root/napcat-run.log"
+        return self.wsl.probe(qr_path, log_path, ttl=ttl)
 
     def pids(self) -> list[int]:
         return list(self.probe(ttl=3).get("pids") or [])
@@ -889,8 +891,9 @@ class NapCat:
 
     def read_log(self, lines: int = 200) -> str:
         layout = self.discover()
+        log_path = layout.get("log") or self.st.napcat_log or "/root/napcat-run.log"
         out = self.wsl.text(
-            "tail -n %d -- %s 2>/dev/null" % (max(20, int(lines)), shlex.quote(layout["log"])),
+            "tail -n %d -- %s 2>/dev/null" % (max(20, int(lines)), shlex.quote(log_path)),
             timeout=15,
         )
         if not out:
@@ -899,16 +902,18 @@ class NapCat:
 
     def read_qq_log(self, lines: int = 200) -> str:
         layout = self.discover()
+        log_path = layout.get("log") or self.st.napcat_log or "/root/napcat-run.log"
         out = self.wsl.text(
             "grep -E '发送 ->|接收 <-' -- %s 2>/dev/null | tail -n %d"
-            % (shlex.quote(layout["log"]), max(20, int(lines))),
+            % (shlex.quote(log_path), max(20, int(lines))),
             timeout=15,
         )
         return strip_ansi(out) if out else "(暂无 QQ 会话)"
 
     def read_qr_file(self) -> dict:
         layout = self.discover()
-        qr = shlex.quote(layout["qr"])
+        qr_path = layout.get("qr") or self.st.napcat_qr
+        qr = shlex.quote(qr_path)
         r = self.wsl.run(
             "if [ -f %s ]; then stat -c '%%Y' %s; base64 -w0 %s; fi" % (qr, qr, qr),
             timeout=15,
@@ -1073,65 +1078,75 @@ class NapCat:
                 "pids": self.pids(),
                 "already": True,
             }
-        qq = layout["qq"]
-        log = layout["log"]
+        qq = layout.get("qq") or self.st.napcat_qq
+        log = layout.get("log") or self.st.napcat_log or "/root/napcat-run.log"
+        qqq = shlex.quote(qq)
+        logq = shlex.quote(log)
         script = r"""
 set +e
 Q=%(qq)s
 L=%(log)s
 export Q L
 exec 3>&1
-: > "$L"
+: > %(log)s
 {
   echo "=== $(date) NapCat launch ==="
   echo "QQ=$Q"
+  echo "LOG=$L"
   echo "user=$(id -un) home=$HOME"
-  ls -l "$Q" 2>&1
+  ls -l %(qq)s 2>&1
   echo "xvfb-run=$(command -v xvfb-run 2>/dev/null)"
   echo "Xvfb=$(command -v Xvfb 2>/dev/null)"
   echo "screen=$(command -v screen 2>/dev/null)"
-} >> "$L" 2>&1
+} >> %(log)s 2>&1
 pkill -x qq >/dev/null 2>&1
 pkill -x QQ >/dev/null 2>&1
-pkill -f "xvfb-run -a $Q" >/dev/null 2>&1
+pkill -x xvfb-run >/dev/null 2>&1
 pkill -x Xvfb >/dev/null 2>&1
 sleep 0.4
 screen -S napcat -X quit >/dev/null 2>&1
 screen -wipe >/dev/null 2>&1
 if command -v screen >/dev/null 2>&1; then
   if command -v xvfb-run >/dev/null 2>&1; then
-    screen -dmS napcat bash -c 'exec xvfb-run -a "$Q" --no-sandbox >> "$L" 2>&1' >> "$L" 2>&1
+    screen -dmS napcat bash -c "exec xvfb-run -a %(qq)s --no-sandbox >> %(log)s 2>&1" >> %(log)s 2>&1
   elif command -v Xvfb >/dev/null 2>&1; then
-    screen -dmS napcat bash -c 'Xvfb :99 -screen 0 1440x900x24 >> /root/napcat-xvfb.log 2>&1 & sleep 1; DISPLAY=:99 exec "$Q" --no-sandbox >> "$L" 2>&1' >> "$L" 2>&1
+    screen -dmS napcat bash -c "Xvfb :99 -screen 0 1440x900x24 >> /root/napcat-xvfb.log 2>&1 & sleep 1; DISPLAY=:99 exec %(qq)s --no-sandbox >> %(log)s 2>&1" >> %(log)s 2>&1
   else
-    echo "ERROR: neither xvfb-run nor Xvfb found" >> "$L"
+    echo "ERROR: neither xvfb-run nor Xvfb found" >> %(log)s
   fi
 else
   if command -v xvfb-run >/dev/null 2>&1; then
-    nohup xvfb-run -a "$Q" --no-sandbox >> "$L" 2>&1 &
+    nohup xvfb-run -a %(qq)s --no-sandbox >> %(log)s 2>&1 &
   elif command -v Xvfb >/dev/null 2>&1; then
-    nohup bash -c 'Xvfb :99 -screen 0 1440x900x24 >> /root/napcat-xvfb.log 2>&1 & sleep 1; DISPLAY=:99 "$Q" --no-sandbox >> "$L" 2>&1' &
+    nohup bash -c "Xvfb :99 -screen 0 1440x900x24 >> /root/napcat-xvfb.log 2>&1 & sleep 1; DISPLAY=:99 %(qq)s --no-sandbox >> %(log)s 2>&1" &
   else
-    echo "ERROR: neither xvfb-run nor Xvfb found" >> "$L"
+    echo "ERROR: neither xvfb-run nor Xvfb found" >> %(log)s
   fi
 fi
-echo "screen_rc=$?" >> "$L"
+echo "screen_rc=$?" >> %(log)s
 sleep 1
-if command -v screen >/dev/null 2>&1; then screen -ls >> "$L" 2>&1; fi
+if command -v screen >/dev/null 2>&1; then screen -ls >> %(log)s 2>&1; fi
 sleep 4
 if ! pgrep -x qq >/dev/null 2>&1 && ! pgrep -x QQ >/dev/null 2>&1; then
-  echo "--- no QQ process after 5s ---" >> "$L"
-  pgrep -x qq >> "$L" 2>&1
-  pgrep -x QQ >> "$L" 2>&1
-  pgrep -x Xvfb >> "$L" 2>&1
-  pgrep -x xvfb-run >> "$L" 2>&1
-  if command -v screen >/dev/null 2>&1; then screen -ls >> "$L" 2>&1; fi
-  tail -n 40 /root/napcat-xvfb.log >> "$L" 2>&1
+  echo "--- no QQ process after 5s ---" >> %(log)s
+  pgrep -x qq >> %(log)s 2>&1
+  pgrep -x QQ >> %(log)s 2>&1
+  pgrep -x Xvfb >> %(log)s 2>&1
+  pgrep -x xvfb-run >> %(log)s 2>&1
+  if command -v screen >/dev/null 2>&1; then screen -ls >> %(log)s 2>&1; fi
+  tail -n 40 /root/napcat-xvfb.log >> %(log)s 2>&1
 fi
 { pgrep -x qq; pgrep -x QQ; } 2>/dev/null | sort -u | tr '\n' ' ' >&3
-""" % {"qq": shlex.quote(qq), "log": shlex.quote(log)}
+""" % {"qq": qqq, "log": logq}
+        launcher = "/root/napcat-start.sh"
         progress(58, "正在拉起 NapCat 网关")
-        r = self.wsl.run(script, timeout=22)
+        if not self.wsl.write(launcher, script):
+            return {
+                "ok": False,
+                "msg": "NapCat 启动失败：无法写入 %s\n请检查 WSL 根目录权限。" % launcher,
+                "pids": [],
+            }
+        r = self.wsl.run("bash %s" % shlex.quote(launcher), timeout=22)
         out = _decode(r.stdout or b"").strip()
         pids = [int(x) for x in out.split() if x.isdigit()]
         if not pids:
@@ -1154,6 +1169,7 @@ fi
                     reason = s
                     break
             head = "NapCat 启动失败" + ((": " + reason) if reason else "（启动器无输出）")
+            head += "\nQQ=%s\nLOG=%s\nLAUNCHER=%s" % (qq, log, launcher)
             if not tail.strip():
                 tail = "启动器没有产生日志：请检查 xvfb-run / Xvfb / screen 是否安装，以及 QQ 是否可执行。"
             return {"ok": False, "msg": head + "\n" + tail[-2600:], "pids": []}
@@ -1162,19 +1178,16 @@ fi
         return {"ok": True, "msg": "NapCat 已启动", "pids": pids}
 
     def stop(self) -> dict:
-        layout = self.discover()
         script = r"""
-Q=%(qq)s
-export Q
 screen -S napcat -X quit >/dev/null 2>&1
 pkill -x qq >/dev/null 2>&1
 pkill -x QQ >/dev/null 2>&1
 sleep 1
 pkill -x Xvfb >/dev/null 2>&1
-pkill -f "xvfb-run -a $Q" >/dev/null 2>&1
+pkill -x xvfb-run >/dev/null 2>&1
 sleep 0.4
 { pgrep -x qq; pgrep -x QQ; } 2>/dev/null | sort -u | tr '\n' ' '
-""" % {"qq": shlex.quote(layout["qq"])}
+"""
         self.wsl.run(script, timeout=18)
         self.wsl.invalidate()
         for _ in range(20):
